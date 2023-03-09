@@ -1,21 +1,21 @@
- 
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import brute
 plt.style.use("seaborn")
 
-class SMAEMABacktester(): 
-    ''' Class for the vectorized backtesting of SMA/EMA-based trading strategies.
+class SOBacktester(): 
+    ''' Class for the vectorized backtesting of SO-based trading strategies.
 
     Attributes
     ==========
     symbol: str
         ticker symbol with which to work with
-    SMA: int
-        time window in days for SMA
-    EMA: int
-        time window in days for EMA
+    periods: int
+        time window in days for rolling low/high
+    D_mw: int
+        time window in days for %D line
     start: str
         start date for data retrieval
     end: str
@@ -30,25 +30,25 @@ class SMAEMABacktester():
         retrieves and prepares the data
         
     set_parameters:
-        sets one or two new SMA/EMA parameters
+        sets one or two new SO parameters
         
     test_strategy:
-        runs the backtest for the SMA/EMA-based strategy
+        runs the backtest for the SO-based strategy
         
     plot_results:
         plots the performance of the strategy compared to buy and hold
         
     update_and_run:
-        updates EMA parameters and returns the negative absolute performance (for minimization algorithm)
+        updates SO parameters and returns the negative absolute performance (for minimization algorithm)
         
     optimize_parameters:
-        implements a brute force optimization for the two SAM/EMA parameters
+        implements a brute force optimization for the two SO parameters
     '''
     
-    def __init__(self, symbol, SMA, EMA, start, end, tc):
+    def __init__(self, symbol, periods, D_mw, start, end, tc):
         self.symbol = symbol
-        self.SMA = SMA
-        self.EMA = EMA
+        self.periods = periods
+        self.D_mw = D_mw
         self.start = start
         self.end = end
         self.tc = tc
@@ -56,35 +56,39 @@ class SMAEMABacktester():
         self.get_data()
         
     def __repr__(self):
-        return "SMAEMABacktester(symbol = {}, SMA = {}, EMA = {}, start = {}, end = {})".format(self.symbol, self.SMA, self.EMA, self.start, self.end)
+        return "SOBacktester(symbol = {}, periods = {}, D_mw = {}, start = {}, end = {})".format(self.symbol, self.periods, self.D_mw, self.start, self.end)
         
     def get_data(self):
         ''' Retrieves and prepares the data.
         '''
-        raw = pd.read_csv("forex_pairs.csv", parse_dates = ["Date"], index_col = "Date")
-        raw = raw[self.symbol].to_frame().dropna()
+        raw = pd.read_csv("{}_ohlc.csv".format(self.symbol), parse_dates = [0], index_col = 0)
+        raw = raw.dropna()
         raw = raw.loc[self.start:self.end]
-        raw.rename(columns={self.symbol: "price"}, inplace=True)
-        raw["returns"] = np.log(raw / raw.shift(1))
-        raw["SMA"] = raw["price"].rolling(self.SMA).mean() 
-        raw["EMA"] = raw["price"].ewm(span = self.EMA, min_periods = self.EMA).mean() 
+        raw["returns"] = np.log(raw.Close / raw.Close.shift(1))
+        raw["roll_low"] = raw.Low.rolling(self.periods).min()
+        raw["roll_high"] = raw.High.rolling(self.periods).max()
+        raw["K"] = (raw.Close - raw.roll_low) / (raw.roll_high - raw.roll_low) * 100
+        raw["D"] = raw.K.rolling(self.D_mw).mean()
         self.data = raw
         
-    def set_parameters(self, SMA = None, EMA = None):
-        ''' Updates SMA/EMA parameters and resp. time series.
+    def set_parameters(self, periods = None, D_mw = None):
+        ''' Updates SO parameters and resp. time series.
         '''
-        if SMA is not None:
-            self.SMA = SMA
-            self.data["SMA"] = self.data["price"].rolling(self.SMA).mean() 
-        if EMA is not None:
-            self.EMA = EMA
-            self.data["EMA"] = self.data["price"].ewm(span = self.EMA, min_periods = self.EMA).mean()
+        if periods is not None:
+            self.periods = periods
+            self.data["roll_low"] = self.data.Low.rolling(self.periods).min()
+            self.data["roll_high"] = self.data.High.rolling(self.periods).max()
+            self.data["K"] = (self.data.Close - self.data.roll_low) / (self.data.roll_high - self.data.roll_low) * 100
+            self.data["D"] = self.data.K.rolling(self.D_mw).mean() 
+        if D_mw is not None:
+            self.D_mw = D_mw
+            self.data["D"] = self.data.K.rolling(self.D_mw).mean()
             
     def test_strategy(self):
         ''' Backtests the trading strategy.
         '''
         data = self.data.copy().dropna()
-        data["position"] = np.where(data["EMA"] > data["SMA"], 1, -1)
+        data["position"] = np.where(data["K"] > data["D"], 1, -1)
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
         
@@ -109,29 +113,29 @@ class SMAEMABacktester():
         if self.results is None:
             print("No results to plot yet. Run a strategy.")
         else:
-            title = "{} | SMA = {} | EMA = {} | TC = {}".format(self.symbol, self.SMA, self.EMA, self.tc)
+            title = "{} | periods = {}, D_mw = {} | TC = {}".format(self.symbol, self.periods, self.D_mw, self.tc)
             self.results[["creturns", "cstrategy"]].plot(title=title, figsize=(12, 8))
         
-    def update_and_run(self, SMAEMA):
-        ''' Updates SMA/EMA parameters and returns the negative absolute performance (for minimization algorithm).
+    def update_and_run(self, SO):
+        ''' Updates SO parameters and returns the negative absolute performance (for minimization algorithm).
 
         Parameters
         ==========
-        SMAEMA: tuple
-            SMA/EMA parameter tuple
+        SO: tuple
+            SO parameter tuple
         '''
-        self.set_parameters(int(SMAEMA[0]), int(SMAEMA[1]))
+        self.set_parameters(int(SO[0]), int(SO[1]))
         return -self.test_strategy()[0]
     
-    def optimize_parameters(self, SMA_range, EMA_range):
-        ''' Finds global maximum given the SMA/EMA parameter ranges.
+    def optimize_parameters(self, periods_range, D_mw_range):
+        ''' Finds global maximum given the SO parameter ranges.
 
         Parameters
         ==========
-        SMA_range, EMA_range: tuple
+        periods_range, D_mw_range: tuple
             tuples of the form (start, end, step size)
         '''
-        opt = brute(self.update_and_run, (SMA_range, EMA_range), finish=None)
+        opt = brute(self.update_and_run, (periods_range, D_mw_range), finish=None)
         return opt, -self.update_and_run(opt)
     
     

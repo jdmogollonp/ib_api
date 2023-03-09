@@ -97,6 +97,7 @@ class SMABacktester():
         perf = data["cstrategy"].iloc[-1]
         # out-/underperformance of strategy
         outperf = perf - data["creturns"].iloc[-1]
+        self.data_strategy = data
         return round(perf, 6), round(outperf, 6)
     
     def plot_results(self):
